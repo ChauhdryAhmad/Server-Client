@@ -241,52 +241,56 @@ void UPLOAD_command(int client, const char *user_dir, long int *storage)
         perror("Error sending upload command message");
         exit(EXIT_FAILURE);
     }
-    char file_path[128];
-    char file_name[20];
+    char filename[20];
     char buffer[1024];
 
-    memset(file_path, '\0', sizeof(file_path));
-    memset(file_name, '\0', sizeof(file_name));
+    memset(filename, '\0', sizeof(filename));
 
-    if (recv(client, file_path, sizeof(file_path), 0) < 0)
+    if (recv(client, filename, sizeof(filename), 0) < 0)
     {
         perror("Error receiving file path");
         exit(EXIT_FAILURE);
     }
 
-    printf("File path: %s\n", file_path);
+    printf("File path: %s\n", filename);
     fflush(stdout);
 
-    if (access(file_path, F_OK) == -1)
+    // if (access(file_path, F_OK) == -1)
+    // {
+    //     printf("File does not exist\n");
+    //     fflush(stdout);
+    //     if (send(client, "IV", 2, 0) < 0)
+    //     {
+    //         perror("Error sending file does not exist message");
+    //         exit(EXIT_FAILURE);
+    //     }
+    //     return;
+    // }
+    // else
+    // {
+    //     printf("File exists\n");
+    //     fflush(stdout);
+    //     if (send(client, "V", 1, 0) < 0)
+    //     {
+    //         perror("Error sending file exists message");
+    //         exit(EXIT_FAILURE);
+    //     }
+    // }
+
+    if(send(client, "Filename recived", 16, 0) < 0)
     {
-        printf("File does not exist\n");
-        fflush(stdout);
-        if (send(client, "IV", 2, 0) < 0)
-        {
-            perror("Error sending file does not exist message");
-            exit(EXIT_FAILURE);
-        }
-        return;
-    }
-    else
-    {
-        printf("File exists\n");
-        fflush(stdout);
-        if (send(client, "V", 1, 0) < 0)
-        {
-            perror("Error sending file exists message");
-            exit(EXIT_FAILURE);
-        }
+        perror("Error sending file recived message");
+        exit(EXIT_FAILURE);
     }
 
-    const char *filename_ptr = strrchr(file_path, '/');
-    if (filename_ptr)
-        strcpy(file_name, filename_ptr + 1);
-    else
-        strcpy(file_name, file_path);
+    // const char *filename_ptr = strrchr(file_path, '/');
+    // if (filename_ptr)
+    //     strcpy(file_name, filename_ptr + 1);
+    // else
+    //     strcpy(file_name, file_path);
 
-    printf("File name: %s\n", file_name);
-    fflush(stdout);
+    // printf("File name: %s\n", file_name);
+    // fflush(stdout);
 
     memset(buffer, '\0', sizeof(buffer));
 
@@ -300,7 +304,7 @@ void UPLOAD_command(int client, const char *user_dir, long int *storage)
     memset(buffer, '\0', sizeof(buffer));
 
     char path[64];
-    snprintf(path, sizeof(path), "%s/%s", user_dir, file_name);
+    snprintf(path, sizeof(path), "%s/%s", user_dir, filename);
     if (access(path, F_OK) == 0)
     {
         printf("File already exists in user directory\n");
@@ -328,7 +332,7 @@ void UPLOAD_command(int client, const char *user_dir, long int *storage)
     }
     else
     {
-        printf("File dose not in user directory\n");
+        printf("File dose not exist in user directory\n");
         fflush(stdout);
         if (send(client, "NE", 2, 0) < 0)
         {
@@ -344,7 +348,7 @@ void UPLOAD_command(int client, const char *user_dir, long int *storage)
     }
 
     struct stat file_st;
-    stat(file_path, &file_st);
+    stat(filename, &file_st);
     if (*storage - file_st.st_size < 0)
     {
         printf("Not enough storage\n");
@@ -710,6 +714,18 @@ int main(int argc, char **argv)
     {
         perror("Error listening");
         exit(EXIT_FAILURE);
+    }
+
+    if (access(users, F_OK) == -1)
+    {
+        FILE *fp;
+        fp = fopen(users, "w");
+    }
+
+    struct stat dir;
+    if (stat("/database", &dir) == -1)
+    {
+        mkdir("/database", 0700);
     }
 
     client = accept(server, (struct sockaddr *)&client_addr, &clilen);

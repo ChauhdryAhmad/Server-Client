@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planet: Earth</title>
+    <style>
+        body {
+            margin: 0;
+            height: 100vh;
+            background-image: url('space.jpg'); /* Add your starry background image */
+            background-size: cover;
+            display: flex;
+            align-items: center; /* Center vertically */
+            justify-content: space-between; /* Space between left and right sections */
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        
+        .left-container {
+            display: flex;
+            flex-direction: column; /* Stack planet and info box vertically */
+            align-items: flex-start; /* Align items to the start */
+            padding-left: 20px; /* Padding for left section */
+        }
+
+        .planet {
+            width: 150px; /* Adjust size as needed */
+            height: 150px;
+            border-radius: 50%;
+            margin-left: 34%;
+            background-image: url('earth.png'); /* Add rotating planet image */
+            background-size: cover;
+            animation: spin 10s linear infinite;
+            margin-bottom: 20px; /* Space below the planet */
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .surface-block {
+            width: 400px; /* Width of the block */
+            height: 350px; /* Height of the block */
+            padding: 10px;
+            margin-right: 10%;
+            background: rgba(0, 0, 0, 0.7); /* Semi-transparent background */
+            border-radius: 10px;
+            box-shadow: 0 0 15px rgba(255, 255, 255, 0.5); /* Add shadow for effect */
+            display: flex;
+            flex-direction: column; /* Arrange elements vertically */
+            justify-content: center; /* Center image inside the block */
+            align-items: center; /* Center image vertically */
+        }
+
+        .surface-image {
+            width: 100%; /* Image takes full width of the block */
+            border-radius: 10px; /* Round corners for the image */
+            margin-bottom: 10px; /* Space between image and info */
+        }
+
+        .planet-info {
+            text-align: left; /* Align text to the left */
+            color: white; /* Change color to white for better visibility */
+        }
+
+        .info-box {
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            border-radius: 10px;
+            max-width: 400px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="left-container">
+        <div class="planet"></div>
+        <div class="info-box">
+            <h2>Earth</h2>
+            <p>Earth is the third planet from the Sun and the only astronomical object known to harbor life. It has a diverse climate and is home to millions of species.</p>
+            <p><strong>Fun Fact:</strong> Earth is the only planet known to support life and is unique in having liquid water on its surface, covering about 71% of the planet.</p>
+        </div>
+    </div>
+
+    <div class="surface-block">
+        <img class="surface-image" src="earth-surface.png" alt="Earth Surface from Space"> <!-- Add Earth's surface image -->
+        <div class="planet-info">
+            <p><strong>Mass:</strong> 5.972 × 10<sup>24</sup> kg</p>
+            <p><strong>Rotation Speed:</strong> 1670 km/h (at the equator)</p>
+            <p><strong>Orbital Period:</strong> 365.25 days</p>
+        </div>
+    </div>
+
+</body>
+</html>

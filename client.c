@@ -182,13 +182,39 @@ void UPLOAD_command(int client, char *command)
 {
     char file_path[64];
     char buffer[1024];
+    char filename[20];
+
+    memset(file_path, '\0', sizeof(file_path));
+    memset(buffer, '\0', sizeof(buffer));
+    memset(filename, '\0', sizeof(filename));
+
+    strncpy(file_path, command + 8, strlen(command) - 8);
+    file_path[strlen(buffer) - 8] = '\0';
+
+    printf("Uploading file: %s\n", file_path);
+    fflush(stdout);
+
+    if (access(file_path, F_OK) == -1)
+    {
+        printf("Error: File not found.\n");
+        return;
+    }
+
+    const char *filename_ptr = strrchr(file_path, '/');
+    if (filename_ptr)
+        strcpy(filename, filename_ptr + 1);
+    else
+        strcpy(filename, file_path);
+
+    printf("File name: %s\n", filename);
+    fflush(stdout);
+
     if (send(client, "UPLOAD", 6, 0) < 0)
     {
         perror("Error sending upload command");
         exit(EXIT_FAILURE);
     }
-    memset(file_path, '\0', sizeof(file_path));
-    memset(buffer, '\0', sizeof(buffer));
+    
 
     if (recv(client, buffer, sizeof(buffer), 0) < 0)
     {
@@ -199,15 +225,15 @@ void UPLOAD_command(int client, char *command)
     fflush(stdout);
     memset(buffer, '\0', sizeof(buffer));
 
-    strncpy(file_path, command + 8, strlen(command) - 8);
-    file_path[strlen(buffer) - 8] = '\0';
+    // strncpy(file_path, command + 8, strlen(command) - 8);
+    // file_path[strlen(buffer) - 8] = '\0';
 
-    printf("Uploading file: %s\n", file_path);
-    fflush(stdout);
+    // printf("Uploading file: %s\n", file_path);
+    // fflush(stdout);
 
-    if (send(client, file_path, sizeof(file_path), 0) < 0)
+    if (send(client, filename, sizeof(filename), 0) < 0)
     {
-        perror("Error sending file path");
+        perror("Error sending filename");
         exit(EXIT_FAILURE);
     }
 
@@ -217,13 +243,13 @@ void UPLOAD_command(int client, char *command)
         exit(EXIT_FAILURE);
     }
 
-    if (strncmp(buffer, "IV", 2) == 0)
-    {
-        printf("Invalid path provided\n");
-        return;
-    }
+    // if (strncmp(buffer, "IV", 2) == 0)
+    // {
+    //     printf("Invalid path provided\n");
+    //     return;
+    // }
 
-    printf("Valid file path\n");
+    printf("Server says: %s\n", buffer);
     fflush(stdout);
     memset(buffer, '\0', sizeof(buffer));
 
