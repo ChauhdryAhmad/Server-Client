@@ -640,5 +640,7 @@ int main(int argc, char **argv)
 
     close(client);
 
+    printf("Connection closed\n");
+
     return 0;
 }
