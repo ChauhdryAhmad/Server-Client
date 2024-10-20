@@ -255,42 +255,11 @@ void UPLOAD_command(int client, const char *user_dir, long int *storage)
     printf("File path: %s\n", filename);
     fflush(stdout);
 
-    // if (access(file_path, F_OK) == -1)
-    // {
-    //     printf("File does not exist\n");
-    //     fflush(stdout);
-    //     if (send(client, "IV", 2, 0) < 0)
-    //     {
-    //         perror("Error sending file does not exist message");
-    //         exit(EXIT_FAILURE);
-    //     }
-    //     return;
-    // }
-    // else
-    // {
-    //     printf("File exists\n");
-    //     fflush(stdout);
-    //     if (send(client, "V", 1, 0) < 0)
-    //     {
-    //         perror("Error sending file exists message");
-    //         exit(EXIT_FAILURE);
-    //     }
-    // }
-
     if(send(client, "Filename recived", 16, 0) < 0)
     {
         perror("Error sending file recived message");
         exit(EXIT_FAILURE);
     }
-
-    // const char *filename_ptr = strrchr(file_path, '/');
-    // if (filename_ptr)
-    //     strcpy(file_name, filename_ptr + 1);
-    // else
-    //     strcpy(file_name, file_path);
-
-    // printf("File name: %s\n", file_name);
-    // fflush(stdout);
 
     memset(buffer, '\0', sizeof(buffer));
 
@@ -347,9 +316,20 @@ void UPLOAD_command(int client, const char *user_dir, long int *storage)
         memset(buffer, '\0', sizeof(buffer));
     }
 
-    struct stat file_st;
-    stat(filename, &file_st);
-    if (*storage - file_st.st_size < 0)
+    if(send(client, "Send File size", 14, 0) < 0)
+    {
+        perror("Error sending file size message");
+        exit(EXIT_FAILURE);
+    }
+
+    long int size;
+    if(recv(client, &size, sizeof(size), 0) < 0)
+    {
+        perror("Error receiving file size");
+        exit(EXIT_FAILURE);
+    }
+
+    if (*storage - size < 0)
     {
         printf("Not enough storage\n");
         fflush(stdout);
@@ -396,7 +376,7 @@ void UPLOAD_command(int client, const char *user_dir, long int *storage)
 
     fclose(file);
 
-    *storage -= file_st.st_size;
+    *storage -= size;
 
     if (send(client, "File uploaded successfully", 26, 0) < 0)
     {

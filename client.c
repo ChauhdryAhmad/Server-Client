@@ -4,6 +4,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <sys/stat.h>
+#include <netinet/in.h>
+#include <sys/types.h>
 
 #define PORT 8080
 
@@ -172,7 +175,7 @@ void authentication(int client)
                 printf("User does not exist. Please sign up.\n");
                 continue;
             }
-            printf("Login Successfull\nWelcome %s", username);
+            printf("Login Successfull\nWelcome %s\n", username);
             break;
         }
     }
@@ -225,12 +228,6 @@ void UPLOAD_command(int client, char *command)
     fflush(stdout);
     memset(buffer, '\0', sizeof(buffer));
 
-    // strncpy(file_path, command + 8, strlen(command) - 8);
-    // file_path[strlen(buffer) - 8] = '\0';
-
-    // printf("Uploading file: %s\n", file_path);
-    // fflush(stdout);
-
     if (send(client, filename, sizeof(filename), 0) < 0)
     {
         perror("Error sending filename");
@@ -242,12 +239,6 @@ void UPLOAD_command(int client, char *command)
         perror("Error receiving Validation message");
         exit(EXIT_FAILURE);
     }
-
-    // if (strncmp(buffer, "IV", 2) == 0)
-    // {
-    //     printf("Invalid path provided\n");
-    //     return;
-    // }
 
     printf("Server says: %s\n", buffer);
     fflush(stdout);
@@ -297,6 +288,24 @@ void UPLOAD_command(int client, char *command)
     }
 
     memset(buffer, '\0', sizeof(buffer));
+
+    if(recv(client, buffer, sizeof(buffer), 0) < 0)
+    {
+        perror("Error receiving file size message");
+        exit(EXIT_FAILURE);
+    }
+    printf("Server says: %s\n", buffer);
+    memset(buffer, '\0', sizeof(buffer));
+
+    struct stat file_st;
+    stat(filename, &file_st);
+    long int size = file_st.st_size;
+
+    if(send(client, &(size), sizeof(size), 0) < 0)
+    {
+        perror("Error sending file size");
+        exit(EXIT_FAILURE);
+    }
 
     if (recv(client, buffer, sizeof(buffer), 0) < 0)
     {
