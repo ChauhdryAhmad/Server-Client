@@ -181,10 +181,55 @@ void authentication(int client)
     }
 }
 
+char* run_length_encode(char* chunk, int size, int* sz)
+{
+    char* encoded_chunk = (char*)malloc((size * 2 + 1) * sizeof(char));
+    memset(encoded_chunk, '\0', sizeof(encoded_chunk));
+    int i = 0;
+    *sz = 0;
+    while (i < size)
+    {
+        int count = 1;
+        while (i + 1 < size && chunk[i] == chunk[i + count] && count + 1 < 10)
+        {
+            count++;
+        }
+        encoded_chunk[*sz] = chunk[i];
+        (*sz)++;
+        encoded_chunk[*sz] = '0' + count;
+        (*sz)++;
+        i+=count;
+    }
+    return encoded_chunk;
+}
+
+char* run_length_decode(char* chunk, int size, int* sz)
+{
+    char* decoded_chunk = (char*)malloc(900+1);
+    memset(decoded_chunk, '\0', sizeof(decoded_chunk));
+    int i = 0;
+    *sz = 0;
+    while (i < size)
+    {
+        decoded_chunk[*sz] = chunk[i];
+        (*sz)++;
+        i++;
+        int count = chunk[i] - '0';
+        count--;
+        while (count--)
+        {
+            decoded_chunk[*sz] = chunk[i-1];
+            (*sz)++;
+        }
+        i++;
+    }
+    return decoded_chunk;
+}
+
 void UPLOAD_command(int client, char *command)
 {
     char file_path[64];
-    char buffer[1024];
+    char buffer[512];
     char filename[20];
 
     memset(file_path, '\0', sizeof(file_path));
@@ -318,6 +363,7 @@ void UPLOAD_command(int client, char *command)
         printf("Not enough storage\n");
         return;
     }
+    memset(buffer, '\0', sizeof(buffer));
 
     FILE *file = fopen(file_path, "rb");
     if (file == NULL)
@@ -331,20 +377,23 @@ void UPLOAD_command(int client, char *command)
 
     while (byte_size = fread(buffer, 1, sizeof(buffer), file))
     {
-        if (send(client, buffer, byte_size, 0) < 0)
+        int j=0;
+        char* encoded_buffer = run_length_encode(buffer, byte_size, &j);
+        if (send(client, encoded_buffer, j, 0) < 0)
         {
             perror("Error sending file data");
             exit(EXIT_FAILURE);
         }
-        printf("Sent %d bytes\n", byte_size);
+        printf("Sent %d bytes\n", j);
         fflush(stdout);
         memset(buffer, '\0', sizeof(buffer));
 
-        if (recv(client, buffer, sizeof(buffer), 0) < 0)
+        if (j = recv(client, buffer, sizeof(buffer), 0) < 0)
         {
             perror("Error receiving confirmation message");
             exit(EXIT_FAILURE);
         }
+        //printf("Server send: %d\n", j);
         memset(buffer, '\0', sizeof(buffer));
     }
 
@@ -368,7 +417,7 @@ void UPLOAD_command(int client, char *command)
 void DOWNLOAD_command(int client, char *command)
 {
     char file_name[20];
-    char buffer[1024];
+    char buffer[200];
     if (send(client, "DOWNLOAD", 8, 0) < 0)
     {
         perror("Error sending download command");
@@ -430,9 +479,11 @@ void DOWNLOAD_command(int client, char *command)
         {
             break;
         }
-        fwrite(buffer, 1, bytes_read, file);
+        int j = 0;
+        char* decoded_buffer = run_length_decode(buffer, bytes_read, &j);
+        fwrite(decoded_buffer, 1, j, file);
         memset(buffer, '\0', sizeof(buffer));
-        if (send(client, &bytes_read, sizeof(buffer), 0) < 0)
+        if (send(client, &j, sizeof(int), 0) < 0)
         {
             perror("Error sending bytes read message");
             exit(EXIT_FAILURE);
@@ -639,6 +690,8 @@ int main(int argc, char **argv)
     handle_command(client);
 
     close(client);
+
+    printf("Connection closed\n");
 
     return 0;
 }

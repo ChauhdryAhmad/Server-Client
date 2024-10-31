@@ -366,7 +366,7 @@ void UPLOAD_command(int client, const char *user_dir, long int *storage)
         }
         fwrite(buffer, 1, bytes_read, file);
         memset(buffer, '\0', sizeof(buffer));
-        if (send(client, &bytes_read, sizeof(buffer), 0) < 0)
+        if (send(client, &bytes_read, sizeof(int), 0) < 0)
         {
             perror("Error sending bytes read message");
             exit(EXIT_FAILURE);
@@ -396,7 +396,7 @@ void DOWNLOAD_command(int client, const char *user_dir)
         exit(EXIT_FAILURE);
     }
     char file_name[64];
-    char buffer[1024];
+    char buffer[200];
     memset(file_name, '\0', sizeof(file_name));
     memset(buffer, '\0', sizeof(buffer));
     if (recv(client, file_name, sizeof(file_name), 0) < 0)
