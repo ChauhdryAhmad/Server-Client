@@ -7,9 +7,73 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <dirent.h>
+#include <pthread.h>
 
 #define PORT 8080
 #define users "users.txt"
+#define MAX_CLIENTS 10
+#define QUEUE_SIZE 10
+
+pthread_t client_threads[MAX_CLIENTS];
+pthread_mutex_t client_mutex;
+
+int client_arr[MAX_CLIENTS];
+
+int client_count = 0;
+
+int find_empty_slot() 
+{
+    for (int i = 0; i < MAX_CLIENTS; i++) {
+        if (client_arr[i] == 0) {
+            client_arr[i] = 1;
+            return i;
+        }
+    }
+    return -1;
+}
+
+typedef struct {
+    int client_socket;
+    int index;
+} ThreadArgs;
+
+int client_queue[QUEUE_SIZE];
+int front = -1, rear = -1;
+
+int is_queue_full() {
+    return ((rear + 1) % QUEUE_SIZE == front);
+}
+
+int is_queue_empty() {
+    return (front == -1);
+}
+
+void enqueue(int client) {
+    if (is_queue_full()) {
+        printf("Queue is full, rejecting client.\n");
+        close(client); 
+        return;
+    }
+    if (is_queue_empty()) {
+        front = rear = 0;
+    } else {
+        rear = (rear + 1) % QUEUE_SIZE;
+    }
+    client_queue[rear] = client;
+}
+
+int dequeue() {
+    if (is_queue_empty()) {
+        return -1;
+    }
+    int client = client_queue[front];
+    if (front == rear) {
+        front = rear = -1; 
+    } else {
+        front = (front + 1) % QUEUE_SIZE;
+    }
+    return client;
+}
 
 struct client_info
 {
@@ -660,12 +724,36 @@ void handle_client(int client)
     }
 }
 
+void *thread_client(void *arg)
+{
+    ThreadArgs *args = (ThreadArgs *)arg;
+    int client = args->client_socket;
+    int i = args->index;
+    if (send(client, "Server connected successfully", 29, 0) < 0)
+    {
+        perror("Error receiving");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Server connected successfully\n");
+    fflush(stdout);
+    handle_client(client);
+    pthread_mutex_lock(&client_mutex);
+    client_arr[i] = 0;
+    client_count--;
+    pthread_mutex_unlock(&client_mutex);
+    close(client);
+
+}
+
 int main(int argc, char **argv)
 {
     int server, client;
     struct sockaddr_in server_addr, client_addr;
     socklen_t clilen = sizeof(client_addr);
     int opt = 1;
+
+    memset(client_arr, 0, sizeof(client_arr));
 
     server = socket(AF_INET, SOCK_STREAM, 0);
     if (server < 0)
@@ -690,7 +778,7 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    if (listen(server, 3) < 0)
+    if (listen(server, 5) < 0)
     {
         perror("Error listening");
         exit(EXIT_FAILURE);
@@ -708,25 +796,51 @@ int main(int argc, char **argv)
         mkdir("/database", 0700);
     }
 
-    client = accept(server, (struct sockaddr *)&client_addr, &clilen);
-    if (client < 0)
-    {
-        perror("Error accepting");
-        exit(EXIT_FAILURE);
+    while(1)
+    {   
+        client = accept(server, (struct sockaddr *)&client_addr, &clilen);
+        if (client < 0)
+        {
+            perror("Error accepting");
+            exit(EXIT_FAILURE);
+        }
+
+        pthread_mutex_lock(&client_mutex);
+        if(client_count == MAX_CLIENTS - 1)
+        {
+            enqueue(client);
+        }
+        else
+        {
+            ThreadArgs *new_client = malloc(sizeof(ThreadArgs));
+
+            new_client->client_socket = client;
+            int i = find_empty_slot();
+            new_client->index = i;
+            pthread_create(&client_threads[i], NULL, thread_client, new_client);
+        }
+        for(int i = 0; i < MAX_CLIENTS; i++)
+        {
+            if(client_arr[i] == 0)
+            {
+                pthread_join(client_threads[i], NULL);
+                if(!is_queue_empty())
+                {
+                    client_arr[i] = 1;
+                    client_count++;
+                    int dq_client = dequeue();
+                    ThreadArgs *new_client = malloc(sizeof(ThreadArgs));
+                    new_client->client_socket = dq_client;
+                    new_client->index = i;
+                    pthread_create(&client_threads[i], NULL, thread_client, new_client);
+                }
+            }
+        }
+        pthread_mutex_unlock(&client_mutex);
+        
+
+        
     }
-
-    if (send(client, "Server connected successfully", 29, 0) < 0)
-    {
-        perror("Error receiving");
-        exit(EXIT_FAILURE);
-    }
-
-    printf("Server connected successfully\n");
-    fflush(stdout);
-
-    // authentication(client);
-
-    handle_client(client);
 
     close(server);
     close(client);
