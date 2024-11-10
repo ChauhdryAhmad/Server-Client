@@ -397,7 +397,7 @@ void UPLOAD_command(int client, const char *user_dir, long int *storage)
     {
         printf("Not enough storage\n");
         fflush(stdout);
-        if (send(client, "LS", 1, 0) < 0)
+        if (send(client, "LS", 2, 0) < 0)
         {
             perror("Error sending not enough storage message");
             exit(EXIT_FAILURE);
