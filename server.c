@@ -14,6 +14,188 @@
 #define MAX_CLIENTS 10
 #define QUEUE_SIZE 10
 
+typedef struct FileNode {
+    char filename[256];
+    int uid; 
+    int storage;
+    struct FileNode *next;
+} FileNode;
+
+typedef struct FileList {
+    FileNode *head;
+    pthread_mutex_t mutex;
+} FileList;
+
+FileList file_list;
+FileList st_list;
+
+void init_file_list(FileList *list) 
+{
+    list->head = NULL;
+    pthread_mutex_init(&list->mutex, NULL);
+}
+
+// int is_file_in_use(FileList *list, const char *filename, int uid) 
+// {
+//     pthread_mutex_lock(&list->mutex);
+//     FileNode *current = list->head;
+//     while (current != NULL) {
+//         if (strcmp(current->filename, filename) == 0 && current->uid != uid) {
+//             pthread_mutex_unlock(&list->mutex);
+//             return 1; 
+//         }
+//         current = current->next;
+//     }
+//     pthread_mutex_unlock(&list->mutex);
+//     return 0; 
+// }
+
+int is_file_in_use(FileList *list, int uid) 
+{
+    pthread_mutex_lock(&list->mutex);
+    FileNode *current = list->head;
+    while (current != NULL) {
+        if (current->uid != uid) {
+            pthread_mutex_unlock(&list->mutex);
+            return 1; 
+        }
+        current = current->next;
+    }
+    pthread_mutex_unlock(&list->mutex);
+    return 0; 
+}
+
+void add_file_to_list(FileList *list, const char *filename, int uid, int storage) {
+    pthread_mutex_lock(&list->mutex);
+    FileNode *new_node = malloc(sizeof(FileNode));
+    strcpy(new_node->filename, filename);
+    new_node->uid = uid;
+    new_node->next = list->head;
+    new_node->storage = storage;
+    list->head = new_node;
+    pthread_mutex_unlock(&list->mutex);
+}
+
+FileNode* remove_file_from_list(FileList *list, const char *filename, int uid) {
+    pthread_mutex_lock(&list->mutex);
+    FileNode *current = list->head;
+    FileNode *prev = NULL;
+    FileNode *res;
+
+    while (current != NULL) {
+        if (current->uid == uid) {
+            if (prev == NULL) { 
+                list->head = current->next;
+            } else {
+                prev->next = current->next;
+            }
+            res = current;
+            free(current);
+            break;
+        }
+        prev = current;
+        current = current->next;
+    }
+    pthread_mutex_unlock(&list->mutex);
+    return res;
+}
+
+typedef struct request {
+    int client_socket;         
+    int uid;    
+    int storage;               
+    char command[16];          
+    char filename[256];
+    char user_dir[128];
+    int iscomplete;        
+    struct request *next;      
+} Request;
+
+typedef struct queue {
+    Request *front;            
+    Request *rear;    
+    int sz;         
+    pthread_mutex_t lock;      
+    pthread_cond_t not_empty;  
+} Queue;
+
+Queue request_queue;
+Queue working_queue;
+
+void init_queue(Queue *q) {
+    q->front = NULL;
+    q->rear = NULL;
+    q->sz = 0;
+    pthread_mutex_init(&q->lock, NULL);
+    pthread_cond_init(&q->not_empty, NULL);
+}
+
+void enqueue(Queue *q, Request *req) 
+{
+    // Allocate memory for a new Request
+    Request *new_request = (Request *)malloc(sizeof(Request));
+    if (new_request == NULL) {
+        perror("Failed to allocate memory for new request");
+        exit(EXIT_FAILURE);
+    }
+
+    *new_request = *req;
+    new_request->next = NULL;
+
+    pthread_mutex_lock(&q->lock);
+
+    if (q->rear == NULL) {
+        q->front = q->rear = new_request;  
+    } else {
+        q->rear->next = new_request;       
+        q->rear = new_request;             
+    }
+    q->sz++;
+    pthread_cond_signal(&q->not_empty);    
+    pthread_mutex_unlock(&q->lock);
+}
+
+Request *dequeue(Queue *q) 
+{
+    pthread_mutex_lock(&q->lock);
+    while (q->front == NULL) {
+        pthread_cond_wait(&q->not_empty, &q->lock);
+    }
+    Request *req = q->front;
+    q->front = q->front->next;
+    if (q->front == NULL) {
+        q->rear = NULL;
+    }
+    q->sz--;
+    pthread_mutex_unlock(&q->lock);
+    return req;
+}
+
+int isEmpty(Queue *q) {
+    pthread_mutex_lock(&q->lock);
+    int empty = (q->sz == 0);
+    pthread_mutex_unlock(&q->lock);
+    return empty;
+}
+
+void destroy_queue(Queue *q) {
+    pthread_mutex_lock(&q->lock);
+    Request *current = q->front;
+    while (current) {
+        Request *temp = current;
+        current = current->next;
+        free(temp);
+    }
+    pthread_mutex_unlock(&q->lock);
+
+    pthread_mutex_destroy(&q->lock);
+    pthread_cond_destroy(&q->not_empty);
+}
+
+
+
+
+
 pthread_t client_threads[MAX_CLIENTS];
 pthread_mutex_t client_mutex;
 
@@ -48,7 +230,7 @@ int is_queue_empty() {
     return (front == -1);
 }
 
-void enqueue(int client) {
+void insert_queue(int client) {
     if (is_queue_full()) {
         printf("Queue is full, rejecting client.\n");
         close(client); 
@@ -62,7 +244,7 @@ void enqueue(int client) {
     client_queue[rear] = client;
 }
 
-int dequeue() {
+int pop_queue() {
     if (is_queue_empty()) {
         return -1;
     }
@@ -77,6 +259,7 @@ int dequeue() {
 
 struct client_info
 {
+    int uid;
     char *username;
     char *password;
     long int storage;
@@ -150,12 +333,15 @@ struct client_info authentication(int client)
                 perror("Error opening users.txt");
                 exit(EXIT_FAILURE);
             }
+            int total;
+            fscanf(file, "%d\n", &total);
             memset(buffer, '\0', sizeof(buffer));
             int check = 0;
             while (fgets(buffer, sizeof(buffer), file))
             {
+                int curr;
                 char existing[20];
-                sscanf(buffer, "%s", existing);
+                sscanf(buffer, "%d %s", &curr, existing);
                 if (strcmp(existing, username) == 0)
                 {
                     check = 1;
@@ -196,8 +382,13 @@ struct client_info authentication(int client)
                 perror("Error opening users.txt");
                 exit(EXIT_FAILURE);
             }
-            fprintf(file, "\n%s %s 99999999", username, password);
+            fprintf(file, "\n%d %s %s 99999999", total, username, password);
+            c.uid = total;
+            total++;
+            rewind(file);  // Go back to the beginning of the file
+            fprintf(file, "%d\n", total);
             fclose(file);
+            
             if (send(client, "User created successfully", 25, 0) < 0)
             {
                 perror("Error sending user created message");
@@ -259,13 +450,16 @@ struct client_info authentication(int client)
                 perror("Error opening users.txt");
                 exit(EXIT_FAILURE);
             }
+            int total;
+            fscanf(file, "%d\n", &total);
             long int s;
             memset(buffer, '\0', sizeof(buffer));
             int check = 0;
+            int curr;
             while (fgets(buffer, sizeof(buffer), file))
             {
                 char name[20], pass[20];
-                sscanf(buffer, "%s %s %ld", name, pass, &s);
+                sscanf(buffer, "%d %s %s %ld", &curr, name, pass, &s);
                 if ((strcmp(username, name) == 0) && (strcmp(password, pass) == 0))
                 {
                     check = 1;
@@ -289,42 +483,22 @@ struct client_info authentication(int client)
                 }
                 continue;
             }
+            c.uid = curr;
             printf("Welcome %s\n", username);
             strncpy(c.username, username, 20);
             strncpy(c.password, password, 20);
-            // c.storage = 10;
+            c.storage = s;
             return c;
         }
     }
 }
 
-void UPLOAD_command(int client, const char *user_dir, long int *storage)
+void UPLOAD_command(int client, const char *user_dir, const char *filename, long int *storage)
 {
-    if (send(client, "Upload command recived", 22, 0) < 0)
-    {
-        perror("Error sending upload command message");
-        exit(EXIT_FAILURE);
-    }
-    char filename[20];
+    
     char buffer[1024];
 
-    memset(filename, '\0', sizeof(filename));
-
-    if (recv(client, filename, sizeof(filename), 0) < 0)
-    {
-        perror("Error receiving file path");
-        exit(EXIT_FAILURE);
-    }
-
-    printf("File path: %s\n", filename);
-    fflush(stdout);
-
-    if(send(client, "Filename recived", 16, 0) < 0)
-    {
-        perror("Error sending file recived message");
-        exit(EXIT_FAILURE);
-    }
-
+    
     memset(buffer, '\0', sizeof(buffer));
 
     if (recv(client, buffer, sizeof(buffer), 0) < 0)
@@ -452,27 +626,15 @@ void UPLOAD_command(int client, const char *user_dir, long int *storage)
     fflush(stdout);
 }
 
-void DOWNLOAD_command(int client, const char *user_dir)
+void DOWNLOAD_command(int client, const char *user_dir, const char *filename)
 {
-    if (send(client, "Download command received", 25, 0) < 0)
-    {
-        perror("Error sending download command message");
-        exit(EXIT_FAILURE);
-    }
-    char file_name[64];
+    
     char buffer[200];
-    memset(file_name, '\0', sizeof(file_name));
     memset(buffer, '\0', sizeof(buffer));
-    if (recv(client, file_name, sizeof(file_name), 0) < 0)
-    {
-        perror("Error receiving file name");
-        exit(EXIT_FAILURE);
-    }
-    printf("File name: %s\n", file_name);
-    fflush(stdout);
+    
 
     char path[128];
-    snprintf(path, sizeof(path), "%s/%s", user_dir, file_name);
+    snprintf(path, sizeof(path), "%s/%s", user_dir, filename);
 
     if (access(path, F_OK) == -1)
     {
@@ -620,24 +782,12 @@ void LIST_command(int client, const char *user_dir)
     fflush(stdout);
 }
 
-void DELETE_command(int client, const char *user_dir, long int *storage)
+void DELETE_command(int client, const char *user_dir, const char *file_name, long int *storage)
 {
-    if (send(client, "Delete command received", 23, 0) < 0)
-    {
-        perror("Error sending delete command message");
-        exit(EXIT_FAILURE);
-    }
-    char file_name[64];
+    
     char buffer[128];
-    memset(file_name, '\0', sizeof(file_name));
     memset(buffer, '\0', sizeof(buffer));
-    if (recv(client, file_name, sizeof(file_name), 0) < 0)
-    {
-        perror("Error receiving file name");
-        exit(EXIT_FAILURE);
-    }
-    printf("File name: %s\n", file_name);
-    fflush(stdout);
+    
 
     char path[128];
     snprintf(path, sizeof(path), "%s/%s", user_dir, file_name);
@@ -681,6 +831,70 @@ void DELETE_command(int client, const char *user_dir, long int *storage)
     fflush(stdout);
 }
 
+void END_command(int client, int uid, long int storage)
+{
+    if (send(client, "Goodbye", 7, 0) < 0) {
+        perror("Error sending goodbye message");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Received 'END' command. Updating storage and closing connection.\n");
+
+    FILE *file = fopen(users, "r+");
+    if (file == NULL) {
+        perror("ERROR opening users.txt for reading and updating");
+        exit(EXIT_FAILURE);
+    }
+
+    int total_users = 0;
+    if (fscanf(file, "%d\n", &total_users) != 1) {
+        perror("ERROR reading total users from file");
+        fclose(file);
+        exit(EXIT_FAILURE);
+    }
+
+    FILE *temp_file = fopen("temp_users.txt", "w");
+    if (temp_file == NULL) {
+        perror("ERROR opening temp file for writing");
+        fclose(file);
+        exit(EXIT_FAILURE);
+    }
+
+    fprintf(temp_file, "%d\n", total_users);
+
+    char line[256];
+    int id;
+    long int current_storage;
+    char existing_user[50], existing_password[50];
+
+    while (fgets(line, sizeof(line), file)) {
+        if (sscanf(line, "%d %s %s %ld", &id, existing_user, existing_password, &current_storage) == 4) {
+            if (id == uid) {
+                printf("Updating storage for user ID %d (%s) from %ld to %ld\n", id, existing_user, current_storage, storage);
+                fprintf(temp_file, "%d %s %s %ld\n", id, existing_user, existing_password, storage);
+            } else {
+                fprintf(temp_file, "%d %s %s %ld\n", id, existing_user, existing_password, current_storage);
+            }
+        }
+    }
+
+    fclose(file);
+    fclose(temp_file);
+
+    if (remove(users) != 0) {
+        perror("ERROR removing original users file");
+        exit(EXIT_FAILURE);
+    }
+
+    if (rename("temp_users.txt", users) != 0) {
+        perror("ERROR renaming temp file to users file");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Storage updated successfully for user ID %d. Closing connection.\n", uid);
+
+}
+
 void handle_client(int client)
 {
     struct client_info c;
@@ -698,6 +912,12 @@ void handle_client(int client)
 
     while (1)
     {
+        char buffer[64];
+        Request *req = (Request *)malloc(sizeof(Request));
+        if (req == NULL) {
+            perror("Failed to allocate memory for new request");
+            exit(EXIT_FAILURE);
+        }
         memset(buffer, '\0', sizeof(buffer));
         if (recv(client, buffer, sizeof(buffer), 0) < 0)
         {
@@ -705,22 +925,127 @@ void handle_client(int client)
             exit(EXIT_FAILURE);
         }
         printf("Client says: %s\n", buffer);
+
+        strncpy(req->user_dir, user_dir, sizeof(user_dir));
+
         if (strncmp(buffer, "UPLOAD", 6) == 0)
         {
-            UPLOAD_command(client, user_dir, &c.storage);
+
+            if (send(client, "Upload command recived", 22, 0) < 0)
+            {
+                perror("Error sending upload command message");
+                exit(EXIT_FAILURE);
+            }
+            char filename[20];
+            memset(filename, '\0', sizeof(filename));
+
+            if (recv(client, filename, sizeof(filename), 0) < 0)
+            {
+                perror("Error receiving file path");
+                exit(EXIT_FAILURE);
+            }
+
+            printf("File path: %s\n", filename);
+            fflush(stdout);
+
+            if(send(client, "Filename recived", 16, 0) < 0)
+            {
+                perror("Error sending file recived message");
+                exit(EXIT_FAILURE);
+            }
+
+            req->client_socket = client;
+            req->iscomplete = 1;
+            req->uid = c.uid;
+            req->storage = c.storage;
+            strncpy(req->filename, filename, sizeof(filename));
+            strncpy(req->command, "UPLOAD", 6);
+            // UPLOAD_command(client, user_dir, &c.storage);
         }
-        if (strncmp(buffer, "DOWNLOAD", 8) == 0)
+
+        else if (strncmp(buffer, "DOWNLOAD", 8) == 0)
         {
-            DOWNLOAD_command(client, user_dir);
+            if (send(client, "Download command received", 25, 0) < 0)
+            {
+                perror("Error sending download command message");
+                exit(EXIT_FAILURE);
+            }
+            char filename[64];
+            memset(filename, '\0', sizeof(filename));
+
+            if (recv(client, filename, sizeof(filename), 0) < 0)
+            {
+                perror("Error receiving file name");
+                exit(EXIT_FAILURE);
+            }
+            printf("File name: %s\n", filename);
+            fflush(stdout);
+            req->client_socket = client;
+            req->iscomplete = 1;
+            req->uid = c.uid;
+            req->storage = c.storage;
+            strncpy(req->filename, filename, sizeof(filename));
+            strncpy(req->command, "DOWNLOAD", 8);
+            // DOWNLOAD_command(client, user_dir, filename);
         }
-        if (strncmp(buffer, "LIST", 4) == 0)
+
+        else if (strncmp(buffer, "LIST", 4) == 0)
         {
-            LIST_command(client, user_dir);
+            req->client_socket = client;
+            req->iscomplete = 1;
+            req->uid = c.uid;
+            req->storage = c.storage;
+            strncpy(req->filename, "\0", 1);
+            strncpy(req->command, "LIST", 4);
+            // LIST_command(client, user_dir);
         }
-        if (strncmp(buffer, "DELETE", 6) == 0)
+
+        else if (strncmp(buffer, "DELETE", 6) == 0)
         {
-            DELETE_command(client, user_dir, &c.storage);
+
+            if (send(client, "Delete command received", 23, 0) < 0)
+            {
+                perror("Error sending delete command message");
+                exit(EXIT_FAILURE);
+            }
+            char file_name[64];
+
+            memset(file_name, '\0', sizeof(file_name));
+            if (recv(client, file_name, sizeof(file_name), 0) < 0)
+            {
+                perror("Error receiving file name");
+                exit(EXIT_FAILURE);
+            }
+            printf("File name: %s\n", file_name);
+            fflush(stdout);
+            req->client_socket = client;
+            req->iscomplete = 1;
+            req->uid = c.uid;
+            req->storage = c.storage;
+            strncpy(req->filename, file_name, sizeof(file_name));
+            strncpy(req->command, "DELETE", 6);
+            
+            // DELETE_command(client, user_dir, &c.storage);
         }
+
+        else if (strncmp(buffer, "END", 3) == 0) 
+        {
+            req->client_socket = client;
+            req->iscomplete = 1;
+            req->uid = c.uid;
+            req->storage = c.storage;
+            strncpy(req->filename, "\0", 1);
+            strncpy(req->command, "END", 3);
+            enqueue(&request_queue, req);
+            while(req->iscomplete == 0);
+            free(req);
+            break;
+        }
+
+        enqueue(&request_queue, req);
+        while(req->iscomplete == 0);
+        free(req);
+
     }
 }
 
@@ -746,12 +1071,156 @@ void *thread_client(void *arg)
 
 }
 
+
+
+void *client_handler(void *arg) 
+{
+
+    Queue *q = (Queue *)arg;
+    init_file_list(&file_list);
+    init_file_list(&st_list);
+
+    while (1) 
+    {
+        while(isEmpty(q))
+        {
+            // printf("Empty queue\n");
+        }
+
+        Request *req = dequeue(q);
+        if (!req) 
+        {
+            continue; 
+        }
+
+        if(is_file_in_use(&st_list, req->uid))
+        {
+            FileNode *res = remove_file_from_list(&st_list, req->filename, req->uid);
+            req->storage = res->storage;
+            free(res);
+            add_file_to_list(&st_list, req->filename, req->uid, req->storage);
+        }
+
+        
+
+        if (req->filename[0] != '\0' && is_file_in_use(&file_list, req->uid)) 
+        {
+            printf("File '%s' is currently in use. UID=%d is waiting...\n", 
+                   req->filename, req->uid);
+              
+            enqueue(q, req);
+            free(req); 
+            sleep(1);  
+            continue;
+        }
+        add_file_to_list(&file_list, req->filename, req->uid, req->storage);
+
+        printf("Enque user %d\n", req->uid);
+        enqueue(&working_queue, req);
+
+        // remove_file_from_list(&file_list, req->filename, req->uid);
+
+        free(req);
+    }
+
+    return NULL;
+}
+
+void proccessor(Request *req)
+{
+    // Process the request here
+    printf("Processing %s request for with UID=%d\n", req->command, req->uid);
+
+    if (strncmp(req->command, "UPLOAD", 6) == 0)
+    {
+        UPLOAD_command(req->client_socket, req->user_dir, req->filename, &req->storage);
+    }
+    if (strncmp(req->command, "DOWNLOAD", 8) == 0)
+    {
+        DOWNLOAD_command(req->client_socket, req->user_dir, req->filename);
+    }
+    if (strncmp(req->command, "LIST", 4) == 0)
+    {
+        LIST_command(req->client_socket, req->user_dir);
+    }
+    if (strncmp(req->command, "DELETE", 6) == 0)
+    {
+        DELETE_command(req->client_socket, req->user_dir, req->filename, &req->storage);
+    }
+    if (strncmp(req->command, "END", 3) == 0)
+    {
+        END_command(req->client_socket, req->uid, &req->storage);
+    }
+    
+    sleep(1);
+    req->iscomplete = 0;
+    printf("Finished %s request for file with UID=%d\n", req->command, req->uid);
+}
+
+void *worker(void *arg)
+{
+    Queue *q = (Queue *)arg;
+
+    while (1) 
+    {
+        while (isEmpty(q));
+
+        Request *req = dequeue(q);
+        if (!req) 
+        {
+            continue; 
+        }
+
+        printf("Entering proccessor for %s request for with UID=%d\n", req->command, req->uid);
+
+        proccessor(req);
+
+        printf("Exiting proccessor for %s request for with UID=%d\n", req->command, req->uid);
+
+        remove_file_from_list(&file_list, req->filename, req->uid);
+        if(is_file_in_use(&st_list, req->uid))
+        {
+            FileNode *res = remove_file_from_list(&st_list, req->filename, req->uid);
+            // req->storage = res->storage;
+            free(res);
+        }
+        add_file_to_list(&st_list, req->filename, req->uid, req->storage);
+
+        free(req);
+    }
+
+    return NULL;
+}
+
+
+
 int main(int argc, char **argv)
 {
     int server, client;
     struct sockaddr_in server_addr, client_addr;
     socklen_t clilen = sizeof(client_addr);
     int opt = 1;
+
+    init_queue(&request_queue);
+    init_queue(&working_queue);
+
+    pthread_t handler_thread;
+
+    // Start the queue handler thread
+    if (pthread_create(&handler_thread, NULL, client_handler, (void *)&request_queue) != 0)
+    {
+        perror("Error creating queue handler thread");
+        exit(EXIT_FAILURE);
+    }
+
+    pthread_t worker_thread;
+
+    // Start the queue handler thread
+    if (pthread_create(&worker_thread, NULL, worker, (void *)&working_queue) != 0)
+    {
+        perror("Error creating queue handler thread");
+        exit(EXIT_FAILURE);
+    }
 
     memset(client_arr, 0, sizeof(client_arr));
 
@@ -808,7 +1277,7 @@ int main(int argc, char **argv)
         pthread_mutex_lock(&client_mutex);
         if(client_count == MAX_CLIENTS - 1)
         {
-            enqueue(client);
+            insert_queue(client);
         }
         else
         {
@@ -828,7 +1297,7 @@ int main(int argc, char **argv)
                 {
                     client_arr[i] = 1;
                     client_count++;
-                    int dq_client = dequeue();
+                    int dq_client = pop_queue();
                     ThreadArgs *new_client = malloc(sizeof(ThreadArgs));
                     new_client->client_socket = dq_client;
                     new_client->index = i;
@@ -841,6 +1310,11 @@ int main(int argc, char **argv)
 
         
     }
+
+    pthread_cancel(handler_thread);
+    pthread_join(handler_thread, NULL);
+
+    destroy_queue(&request_queue);
 
     close(server);
     close(client);

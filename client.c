@@ -648,6 +648,23 @@ void handle_command(int client)
         {
             DELETE_command(client, buffer);
         }
+        if (strncmp(buffer, "$END", 4) == 0)
+        {
+            if(send(client, "END", 3, 0) < 0)
+            {
+                perror("Error sending end command");
+                exit(EXIT_FAILURE);
+            }
+            memset(buffer, '\0', sizeof(buffer));
+            if (recv(client, buffer, sizeof(buffer), 0) < 0)
+            {
+                perror("Error receiving confirmation message");
+                exit(EXIT_FAILURE);
+            }
+            printf("Server says: %s\n", buffer);
+            fflush(stdout);
+            break;
+        }
     }
 }
 
