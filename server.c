@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <pthread.h>
+#include "p4.c"
 
 #define PORT 8080
 #define users "users.txt"
@@ -169,6 +170,13 @@ Request *dequeue(Queue *q)
     q->sz--;
     pthread_mutex_unlock(&q->lock);
     return req;
+}
+
+int get_queue_size(Queue *q) {
+    pthread_mutex_lock(&q->lock);
+    int size = q->sz;  // Get current queue size
+    pthread_mutex_unlock(&q->lock);
+    return size;
 }
 
 int isEmpty(Queue *q) {
@@ -833,7 +841,7 @@ void DELETE_command(int client, const char *user_dir, const char *file_name, lon
 
 void END_command(int client, int uid, long int storage)
 {
-    if (send(client, "Goodbye", 7, 0) < 0) {
+    if (write(client, "Goodbye", 7) < 0) {
         perror("Error sending goodbye message");
         exit(EXIT_FAILURE);
     }
@@ -895,6 +903,9 @@ void END_command(int client, int uid, long int storage)
 
 }
 
+pthread_cond_t req_cond = PTHREAD_COND_INITIALIZER;
+pthread_mutex_t req_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 void handle_client(int client)
 {
     struct client_info c;
@@ -912,6 +923,19 @@ void handle_client(int client)
 
     while (1)
     {
+        void* ptr1 = my_malloc(64);
+        void* ptr2 = my_malloc(128);
+        void* ptr3 = my_malloc(32);
+        void* ptr4 = my_malloc(256);
+        void* ptr5 = my_malloc(16);
+        my_free(ptr1);
+        print_bins();
+        printf("\nAllocated: %p, %p, %p, %p, %p\n", ptr1, ptr2, ptr3, ptr4, ptr5);
+
+    
+        printf("\nState of bins after allocation:\n");
+        print_bins();
+
         char buffer[64];
         Request *req = (Request *)malloc(sizeof(Request));
         if (req == NULL) {
@@ -1043,8 +1067,29 @@ void handle_client(int client)
         }
 
         enqueue(&request_queue, req);
-        while(req->iscomplete == 0);
+        printf("Going for next command1\n");
+
+        while(req->iscomplete == 1)
+        {
+            printf("FUCK1!! req val %d\n", req->iscomplete);
+
+
+            pthread_cond_wait(&req_cond, &req_mutex);
+            printf("FUCK2!! req val %d\n", req->iscomplete);
+            break;
+        }
+        printf("Going for next command2\n");
+
         free(req);
+        printf("Going for next command\n");
+        my_free(ptr2);
+        my_free(ptr4);
+        
+        printf("\nFreed: %p, %p\n", ptr2, ptr4);
+
+        
+        printf("\nState of bins after freeing some blocks:\n");
+        print_bins();
 
     }
 }
@@ -1082,12 +1127,16 @@ void *client_handler(void *arg)
 
     while (1) 
     {
-        while(isEmpty(q))
+        if(isEmpty(q))
         {
-            // printf("Empty queue\n");
+            printf("Empty queue\n");
+            while(isEmpty(q));
         }
 
+        printf("Queue size in handler %d\n", get_queue_size(q));
+
         Request *req = dequeue(q);
+        printf("Dequed %d user requests\n", req->uid);
         if (!req) 
         {
             continue; 
@@ -1095,6 +1144,7 @@ void *client_handler(void *arg)
 
         if(is_file_in_use(&st_list, req->uid))
         {
+            printf("User in storage if in list in handler is currently in use. UID=%d is waiting...\n", req->uid);
             FileNode *res = remove_file_from_list(&st_list, req->filename, req->uid);
             req->storage = res->storage;
             free(res);
@@ -1102,6 +1152,7 @@ void *client_handler(void *arg)
         }
 
         
+        printf("User not in storage if in list in handler is currently in use. UID=%d is waiting...\n", req->uid);
 
         if (req->filename[0] != '\0' && is_file_in_use(&file_list, req->uid)) 
         {
@@ -1128,6 +1179,7 @@ void *client_handler(void *arg)
 
 void proccessor(Request *req)
 {
+    // pthread_mutex_lock(&req_mutex);
     // Process the request here
     printf("Processing %s request for with UID=%d\n", req->command, req->uid);
 
@@ -1153,7 +1205,17 @@ void proccessor(Request *req)
     }
     
     sleep(1);
+
+    printf("FUCK2!! req val %d\n", req->iscomplete);
+
+    
     req->iscomplete = 0;
+    printf("FUCK2!! req val %d\n", req->iscomplete);
+
+    // Notify waiting threads
+    pthread_cond_signal(&req_cond);
+
+    // pthread_mutex_unlock(&req_mutex);
     printf("Finished %s request for file with UID=%d\n", req->command, req->uid);
 }
 
@@ -1163,7 +1225,11 @@ void *worker(void *arg)
 
     while (1) 
     {
-        while (isEmpty(q));
+        if(isEmpty(q))
+        {
+            printf("Empty queue in Processor\n");
+            while (isEmpty(q));
+        }
 
         Request *req = dequeue(q);
         if (!req) 
@@ -1180,11 +1246,12 @@ void *worker(void *arg)
         remove_file_from_list(&file_list, req->filename, req->uid);
         if(is_file_in_use(&st_list, req->uid))
         {
+            printf("User %d already exists in case of storage in Proccessor\n", req->uid);
             FileNode *res = remove_file_from_list(&st_list, req->filename, req->uid);
-            // req->storage = res->storage;
             free(res);
         }
         add_file_to_list(&st_list, req->filename, req->uid, req->storage);
+        printf("User %d dosent already exists in case of storage in Proccessor\n", req->uid);
 
         free(req);
     }

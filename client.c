@@ -656,7 +656,13 @@ void handle_command(int client)
                 exit(EXIT_FAILURE);
             }
             memset(buffer, '\0', sizeof(buffer));
-            if (recv(client, buffer, sizeof(buffer), 0) < 0)
+
+            int a = recv(client, buffer, sizeof(buffer), 0);
+            while(a<=0)
+            {
+                a = recv(client, buffer, sizeof(buffer), 0);
+            }
+            if (a < 0)
             {
                 perror("Error receiving confirmation message");
                 exit(EXIT_FAILURE);
